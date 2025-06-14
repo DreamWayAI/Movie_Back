@@ -1,56 +1,45 @@
-from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 import requests
-from io import BytesIO
 import os
+import time
 
 app = FastAPI()
 
-# Додаємо CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.post("/animate")
-async def animate_image(file: UploadFile = File(...)):
-    api_key = os.getenv("D_ID_API_KEY")
-    if not api_key:
-        return {"error": "Missing D_ID_API_KEY"}
+API_KEY = "vk-3bHcHfaAlflBADMAKGG3BtiDqvIxMSfDQMJT0VNkAnXyU"
 
-    image_bytes = await file.read()
-
-    headers = {
-        "Authorization": f"Bearer {api_key}"
-    }
-
-    data = {
-        "script": "Hello, this is your AI animation!",
-        "driver_url": "bank://lively"
-    }
-
+@app.post("/generate")
+async def generate(file: UploadFile = File(...), prompt: str = Form(...)):
     files = {
-        "source_image": ("image.jpg", image_bytes, file.content_type)
+        "file": (file.filename, await file.read(), file.content_type)
     }
+    data = {
+        "prompt": prompt,
+        "aspect_ratio": "square",
+        "motion": "default"
+    }
+    headers = {
+        "Authorization": f"Bearer {API_KEY}"
+    }
+    init_res = requests.post("https://api.pika.art/v1/gen", headers=headers, files=files, data=data)
+    job_id = init_res.json().get("id")
 
-    response = requests.post(
-        "https://api.d-id.com/talks",
-        headers=headers,
-        files=files,
-        data=data
-    )
+    # Очікуємо завершення генерації
+    for _ in range(30):
+        time.sleep(5)
+        status_res = requests.get(f"https://api.pika.art/v1/gen/{job_id}", headers=headers)
+        data = status_res.json()
+        if data.get("status") == "succeeded":
+            video_url = data.get("video_url")
+            video = requests.get(video_url)
+            return StreamingResponse(iter([video.content]), media_type="video/mp4")
 
-    if response.status_code != 200:
-        return {"error": "Failed to create animation", "details": response.text}
-
-    result = response.json()
-    video_url = result.get("result_url")
-    if not video_url:
-        return {"error": "No result_url in response"}
-
-    video_data = requests.get(video_url).content
-    return StreamingResponse(BytesIO(video_data), media_type="video/mp4")
+    return {"error": "Timed out"}
