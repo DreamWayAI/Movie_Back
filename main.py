@@ -2,22 +2,44 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import StreamingResponse
 import requests
 from io import BytesIO
+import os
 
 app = FastAPI()
 
-D_ID_API_KEY = "your_did_api_key"
-
 @app.post("/animate")
 async def animate_image(file: UploadFile = File(...)):
+    api_key = os.getenv("D_ID_API_KEY")
+    if not api_key:
+        return {"error": "Missing D_ID_API_KEY"}
+
     image_bytes = await file.read()
-    headers = {"Authorization": f"Bearer {D_ID_API_KEY}"}
+
+    headers = {
+        "Authorization": f"Bearer {api_key}"
+    }
+
+    data = {
+        "script": "Say hello from AI!"
+    }
+
+    files = {
+        "source_image": ("image.jpg", image_bytes, file.content_type)
+    }
+
     response = requests.post(
-        "https://api.d-id.com/talks", 
+        "https://api.d-id.com/talks",
         headers=headers,
-        files={"source_image": ("image.jpg", image_bytes, file.content_type)},
-        data={"script": "Say hello from AI!"}
+        files=files,
+        data=data
     )
-    talk_response = response.json()
-    video_url = talk_response.get("result_url")
+
+    if response.status_code != 200:
+        return {"error": "Failed to create animation", "details": response.text}
+
+    result = response.json()
+    video_url = result.get("result_url")
+    if not video_url:
+        return {"error": "No result_url in response"}
+
     video_data = requests.get(video_url).content
     return StreamingResponse(BytesIO(video_data), media_type="video/mp4")
